@@ -1,0 +1,284 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS Custom Properties ──────────────────────────────────── */
+@layer base {
+  :root {
+    /* Background */
+    --bg-primary: 248 250 252;
+    --bg-secondary: 255 255 255;
+    --bg-tertiary: 241 245 249;
+
+    /* Text */
+    --text-primary: 15 23 42;
+    --text-secondary: 71 85 105;
+    --text-muted: 148 163 184;
+
+    /* Border */
+    --border-default: 226 232 240;
+    --border-subtle: 241 245 249;
+
+    /* Sidebar */
+    --sidebar-bg: 15 23 42;
+    --sidebar-border: 30 41 59;
+    --sidebar-text: 203 213 225;
+    --sidebar-text-muted: 100 116 139;
+    --sidebar-active: 14 165 233;
+    --sidebar-active-text: 255 255 255;
+
+    /* Card */
+    --card-bg: 255 255 255;
+    --card-border: 226 232 240;
+
+    /* Ring */
+    --ring: 14 165 233;
+  }
+
+  .dark {
+    --bg-primary: 2 6 23;
+    --bg-secondary: 10 17 38;
+    --bg-tertiary: 15 23 42;
+
+    --text-primary: 241 245 249;
+    --text-secondary: 148 163 184;
+    --text-muted: 71 85 105;
+
+    --border-default: 30 41 59;
+    --border-subtle: 15 23 42;
+
+    --sidebar-bg: 7 12 30;
+    --sidebar-border: 15 23 42;
+    --sidebar-text: 148 163 184;
+    --sidebar-text-muted: 71 85 105;
+    --sidebar-active: 14 165 233;
+    --sidebar-active-text: 255 255 255;
+
+    --card-bg: 10 17 38;
+    --card-border: 30 41 59;
+
+    --ring: 14 165 233;
+  }
+}
+
+/* ─── Base Styles ─────────────────────────────────────────────── */
+@layer base {
+  * {
+    @apply border-slate-200 dark:border-slate-800;
+  }
+
+  body {
+    @apply bg-slate-50 dark:bg-[#020617] text-slate-900 dark:text-slate-100;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 dark:bg-slate-700 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400 dark:bg-slate-600;
+  }
+
+  /* Focus ring */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-slate-900;
+  }
+}
+
+/* ─── Component Utilities ────────────────────────────────────── */
+@layer components {
+  /* Card */
+  .card {
+    @apply bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-card;
+  }
+
+  .card-md {
+    @apply bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-card-md;
+  }
+
+  /* Button variants */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white
+           bg-sky-600 hover:bg-sky-700 active:bg-sky-800 
+           rounded-lg transition-colors duration-150 
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium
+           text-slate-700 dark:text-slate-200
+           bg-white dark:bg-slate-800 
+           border border-slate-200 dark:border-slate-700
+           hover:bg-slate-50 dark:hover:bg-slate-700 active:bg-slate-100
+           rounded-lg transition-colors duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white
+           bg-rose-600 hover:bg-rose-700 active:bg-rose-800
+           rounded-lg transition-colors duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium
+           text-slate-600 dark:text-slate-400
+           hover:bg-slate-100 dark:hover:bg-slate-800 active:bg-slate-200
+           rounded-lg transition-colors duration-150;
+  }
+
+  /* Input */
+  .input {
+    @apply w-full px-3 py-2 text-sm text-slate-900 dark:text-slate-100
+           bg-white dark:bg-slate-900
+           border border-slate-200 dark:border-slate-700
+           rounded-lg placeholder:text-slate-400 dark:placeholder:text-slate-600
+           focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent
+           transition-colors duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .input-error {
+    @apply border-rose-400 focus:ring-rose-400;
+  }
+
+  /* Label */
+  .label {
+    @apply text-sm font-medium text-slate-700 dark:text-slate-300;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full;
+  }
+
+  /* Sidebar nav item */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 text-sm font-medium
+           text-slate-400 rounded-lg transition-all duration-150
+           hover:bg-slate-800 hover:text-slate-200 cursor-pointer;
+  }
+
+  .nav-item-active {
+    @apply bg-sky-600/20 text-sky-400 hover:bg-sky-600/25 hover:text-sky-300;
+  }
+
+  /* Page header */
+  .page-title {
+    @apply text-2xl font-semibold text-slate-900 dark:text-slate-100 tracking-tight;
+  }
+
+  .page-subtitle {
+    @apply text-sm text-slate-500 dark:text-slate-400 mt-0.5;
+  }
+
+  /* Status dot */
+  .status-dot {
+    @apply inline-block w-2 h-2 rounded-full;
+  }
+
+  /* Skeleton */
+  .skeleton {
+    @apply animate-pulse bg-slate-200 dark:bg-slate-800 rounded-lg;
+  }
+
+  /* Divider */
+  .divider {
+    @apply border-t border-slate-200 dark:border-slate-800;
+  }
+
+  /* Section */
+  .section-header {
+    @apply flex items-center justify-between mb-4;
+  }
+
+  .section-title {
+    @apply text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider;
+  }
+}
+
+/* ─── Status Color Classes ───────────────────────────────────── */
+@layer utilities {
+  /* Dose status */
+  .status-taken {
+    @apply bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900;
+  }
+
+  .status-missed {
+    @apply bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-900;
+  }
+
+  .status-upcoming {
+    @apply bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-900;
+  }
+
+  .status-pending {
+    @apply bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-900;
+  }
+
+  /* Alert priority */
+  .priority-high {
+    @apply bg-rose-50 dark:bg-rose-950/40 border-l-rose-500 text-rose-700 dark:text-rose-400;
+  }
+
+  .priority-medium {
+    @apply bg-amber-50 dark:bg-amber-950/40 border-l-amber-500 text-amber-700 dark:text-amber-400;
+  }
+
+  .priority-low {
+    @apply bg-sky-50 dark:bg-sky-950/40 border-l-sky-500 text-sky-700 dark:text-sky-400;
+  }
+
+  /* Adherence colors */
+  .adherence-excellent {
+    @apply text-emerald-600 dark:text-emerald-400;
+  }
+
+  .adherence-good {
+    @apply text-sky-600 dark:text-sky-400;
+  }
+
+  .adherence-fair {
+    @apply text-amber-600 dark:text-amber-400;
+  }
+
+  .adherence-poor {
+    @apply text-rose-600 dark:text-rose-400;
+  }
+
+  /* Device status */
+  .device-online {
+    @apply text-emerald-500;
+  }
+
+  .device-offline {
+    @apply text-slate-400;
+  }
+
+  .device-error {
+    @apply text-rose-500;
+  }
+}
+
+/* ─── Recharts overrides ─────────────────────────────────────── */
+.recharts-tooltip-wrapper {
+  @apply !shadow-card-lg !rounded-xl !border-0 overflow-hidden;
+}
+
+.recharts-default-tooltip {
+  @apply !bg-white dark:!bg-slate-900 !border !border-slate-200 dark:!border-slate-800 !rounded-xl !text-sm !shadow-none;
+}

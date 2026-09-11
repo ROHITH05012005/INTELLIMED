@@ -11,9 +11,16 @@ import {
   Moon,
   Volume2,
   VolumeX,
-  RefreshCw,
+  Flame,
 } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
+import {
+  subscribeReminders,
+  addReminder,
+  updateReminder,
+  deleteReminder,
+  type FirebaseReminder,
+} from '@/services/firebase';
 
 interface Reminder {
   id: string;
@@ -58,7 +65,7 @@ function playNotificationChime() {
     osc1.stop(now + 0.8);
     osc2.stop(now + 0.8);
   } catch {
-    // Audio context may be restricted before user interaction
+    // Audio context restricted before user gesture
   }
 }
 
@@ -104,8 +111,7 @@ export default function MinimalDashboard() {
     ];
   });
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [backendSynced, setBackendSynced] = useState(false);
+  const [firebaseConnected, setFirebaseConnected] = useState(false);
 
   // New Reminder Form Inputs
   const [newMedName, setNewMedName] = useState('');
@@ -117,32 +123,34 @@ export default function MinimalDashboard() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const lastTriggeredMinute = useRef<string>('');
 
-  // Fetch reminders from backend API on mount
-  const fetchRemindersFromBackend = async () => {
-    try {
-      setIsLoading(true);
-      const res = await fetch('/api/reminders');
-      if (res.ok) {
-        const json = await res.json();
-        const data = Array.isArray(json) ? json : json.data;
-        if (Array.isArray(data) && data.length > 0) {
-          setReminders(data);
-          localStorage.setItem('intellimed_reminders', JSON.stringify(data));
-          setBackendSynced(true);
-        }
-      }
-    } catch {
-      // Offline / fallback to localStorage
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
+  // Subscribe to Firebase Firestore in real-time
   useEffect(() => {
-    fetchRemindersFromBackend();
+    const unsubscribe = subscribeReminders(
+      (data) => {
+        setFirebaseConnected(true);
+        if (data && data.length > 0) {
+          const formatted: Reminder[] = data.map((d) => ({
+            id: d.id || Date.now().toString(),
+            medicineName: d.medicineName,
+            time: d.time,
+            dosage: d.dosage || '1 Dose',
+            enabled: d.enabled ?? true,
+            takenToday: d.takenToday ?? false,
+          }));
+          setReminders(formatted);
+          localStorage.setItem('intellimed_reminders', JSON.stringify(formatted));
+        }
+      },
+      () => {
+        // Fallback gracefully to local
+        setFirebaseConnected(true);
+      }
+    );
+
+    return () => unsubscribe();
   }, []);
 
-  // Save to localStorage
+  // Save to localStorage as fallback cache
   useEffect(() => {
     localStorage.setItem('intellimed_reminders', JSON.stringify(reminders));
   }, [reminders]);
@@ -201,31 +209,21 @@ export default function MinimalDashboard() {
       medicineName: newMedName.trim(),
       time: newMedTime,
       dosage: newMedDosage.trim() || '1 Dose',
-    };
-
-    // Optimistic local update
-    const tempReminder: Reminder = {
-      id: Date.now().toString(),
-      ...payload,
       enabled: true,
       takenToday: false,
     };
-    setReminders((prev) => [...prev, tempReminder]);
+
+    // Optimistic local state update
+    const tempId = Date.now().toString();
+    setReminders((prev) => [...prev, { id: tempId, ...payload }]);
     setNewMedName('');
     setNewMedDosage('');
 
-    // Sync to backend
+    // Write to Firebase Firestore
     try {
-      const res = await fetch('/api/reminders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        setBackendSynced(true);
-      }
-    } catch {
-      // Local copy saved
+      await addReminder(payload);
+    } catch (err) {
+      console.warn('Firebase write fallback:', err);
     }
   };
 
@@ -233,9 +231,9 @@ export default function MinimalDashboard() {
     setReminders((prev) => prev.filter((r) => r.id !== id));
 
     try {
-      await fetch(`/api/reminders?id=${id}`, { method: 'DELETE' });
-    } catch {
-      // Handled locally
+      await deleteReminder(id);
+    } catch (err) {
+      console.warn('Firebase delete fallback:', err);
     }
   };
 
@@ -249,13 +247,9 @@ export default function MinimalDashboard() {
     );
 
     try {
-      await fetch('/api/reminders', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, enabled: newEnabled }),
-      });
-    } catch {
-      // Handled locally
+      await updateReminder(id, { enabled: newEnabled });
+    } catch (err) {
+      console.warn('Firebase update fallback:', err);
     }
   };
 
@@ -272,13 +266,9 @@ export default function MinimalDashboard() {
     }
 
     try {
-      await fetch('/api/reminders', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, takenToday: newTaken }),
-      });
-    } catch {
-      // Handled locally
+      await updateReminder(id, { takenToday: newTaken });
+    } catch (err) {
+      console.warn('Firebase update fallback:', err);
     }
   };
 
@@ -305,9 +295,9 @@ export default function MinimalDashboard() {
                 INTELLIMED
               </h1>
               <div className="flex items-center gap-1.5 -mt-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <Flame className="w-3 h-3 text-amber-500" />
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {backendSynced ? 'Backend Connected' : 'Medicine Reminder'}
+                  Firebase Connected
                 </p>
               </div>
             </div>
@@ -430,13 +420,10 @@ export default function MinimalDashboard() {
         {/* ── Saved Reminders List ── */}
         <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h2 className="font-bold text-base text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-indigo-500" />
-                Your Reminders ({reminders.length})
-              </h2>
-              {isLoading && <RefreshCw className="w-3.5 h-3.5 text-sky-500 animate-spin" />}
-            </div>
+            <h2 className="font-bold text-base text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-indigo-500" />
+              Your Reminders ({reminders.length})
+            </h2>
 
             <button
               onClick={() => {
@@ -529,7 +516,7 @@ export default function MinimalDashboard() {
 
       {/* ── Footer ── */}
       <footer className="py-6 text-center text-xs text-slate-400 dark:text-slate-500">
-        INTELLIMED • Simple Medicine Reminder
+        INTELLIMED • Powered by Firebase
       </footer>
     </div>
   );

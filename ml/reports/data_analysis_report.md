@@ -6,7 +6,25 @@ This report documents the data foundation for the INTELLIMED medication reminder
 
 The dataset is designed to track scheduled medication doses, patient actions, reminder timing, dose state, and time-based adherence behavior. The operational goal is to monitor whether doses were taken, pending, or missed according to the project reminder and grace-period logic.
 
-## 2. Data dictionary
+## 2. Reproducible data pipeline
+
+The repository now includes a reusable, documented pipeline that follows a repeatable data flow:
+
+```text
+Raw synthetic CSV
+        ↓
+Validation + quality reporting
+        ↓
+Feature preparation and temporal encoding
+        ↓
+Processed derivation export
+        ↓
+ML-ready handoff export
+```
+
+This ensures the raw file remains unchanged while downstream work can rely on generated artifact files in `ml/data/processed/`.
+
+## 3. Data dictionary
 
 The central dataset includes the following fields:
 
@@ -29,7 +47,7 @@ The central dataset includes the following fields:
 - `adherence_percentage`: patient or medicine adherence percent
 - `sensor_event`: device event data
 
-## 3. Data quality findings
+## 4. Data quality findings
 
 The dataset should be checked for:
 
@@ -44,7 +62,7 @@ The dataset should be checked for:
 
 Each issue should be reported with a clear explanation and a decision log. Suspicious rows should not be silently deleted without documentation.
 
-## 4. EDA findings
+## 5. EDA findings
 
 The EDA stage should summarize:
 
@@ -59,7 +77,7 @@ The EDA stage should summarize:
 
 EDA is not used to generate medical conclusions; it is a technical assessment of operational patterns and data quality.
 
-## 5. Adherence metrics
+## 6. Adherence metrics
 
 The project-level adherence metric is defined as:
 
@@ -79,7 +97,7 @@ Key metrics should include:
 - average and median delay
 - delay range and distribution
 
-## 6. Important patterns
+## 7. Important patterns
 
 Observed patterns should be reviewed for:
 
@@ -89,7 +107,7 @@ Observed patterns should be reviewed for:
 - medicine-specific adherence variation by schedule frequency
 - delays that correlate with missed reminders or sensor issues
 
-## 7. Recommended features for ML
+## 8. Recommended features for ML
 
 For later ML development, the following fields are strong candidates:
 
@@ -105,7 +123,7 @@ For later ML development, the following fields are strong candidates:
 
 These features should only be included when they reflect information available before the dose outcome is finalized.
 
-## 8. Potential data leakage
+## 9. Potential data leakage
 
 The following risks must be avoided:
 
@@ -116,7 +134,7 @@ The following risks must be avoided:
 
 The general rule is: if the feature is only known after the outcome, it is not valid for prediction.
 
-## 9. Limitations
+## 10. Limitations
 
 This dataset is intended for operational analytics and future ML preparation. It has the following limitations:
 
@@ -125,7 +143,7 @@ This dataset is intended for operational analytics and future ML preparation. It
 - the dataset reflects project logic, not medical outcomes
 - the analysis is designed to support modeling preparation, not direct patient care decisions
 
-## 10. Next steps for Member 3
+## 11. Next steps for Member 3
 
 The next stage is the ML handoff as follows:
 

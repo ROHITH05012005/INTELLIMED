@@ -35,6 +35,17 @@ ml/
 2. `02_eda.ipynb` — load the synthetic dataset, inspect quality, summarize statistics, and generate visualizations
 3. `03_adherence_analysis.ipynb` — validate the dataset, compute adherence metrics, and document quality checks and ML feature recommendations
 
+## Reproducible processing pipeline
+
+The project now includes a reusable Python pipeline that keeps the raw synthetic dataset immutable and generates derived outputs in a deterministic order:
+
+1. validate the raw dataset and log quality findings
+2. generate `ml/data/processed/processed_medication_data.csv`
+3. generate `ml/data/processed/ml_ready_medication_data.csv`
+4. preserve row-level audit metadata for future feature work
+
+The pipeline is implemented in `ml/src/data_validation.py` and `ml/src/preprocessing.py` so the same logic can be reused in notebooks, scripts, or future model-development stages.
+
 ## Synthetic data
 
 This repository contains only synthetic, non-clinical test data for pipeline validation. It is clearly labeled as:

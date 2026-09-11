@@ -1,70 +1,72 @@
-# INTELLIMED — Hardware & ESP32 Integration Guide
+# INTELLIMED — Hardware Wiring & Integration Guide
 
-This guide explains how to connect your physical ESP32 Smart Medicine Dispenser to the live INTELLIMED web application and Firebase Cloud Firestore.
-
----
-
-## 1. Hardware Components Required
-
-| Component | Description | Recommended Pin on ESP32 |
-| :--- | :--- | :--- |
-| **Microcontroller** | ESP32 Dev Module (ESP32-WROOM-32) | — |
-| **Servo Motor** | SG90 or MG996R (rotates pill slot) | **GPIO 18** |
-| **Buzzer** | Active Piezo Buzzer (5V / 3.3V) | **GPIO 19** |
-| **Status LED** | Red/Blue LED + 220Ω resistor | **GPIO 2** (or Built-in LED) |
-| **Push Button** | Momentary tactile switch ("Taken" button) | **GPIO 4** (to GND) |
-| **Power Supply** | 5V 2A USB Adapter or 18650 Battery Shield | VIN & GND |
+This guide is customized specifically for your exact hardware components:
+- **ESP32 Dev Module**
+- **0.96" I2C OLED Display (SSD1306 128x64)**
+- **Active Buzzer**
+- **LED Light**
+- **Push Button**
+- **Breadboard & Jumper Wires**
 
 ---
 
-## 2. Wiring Connections
+## 1. Breadboard Pinout Connection Table
 
-```
-ESP32 Pin          Component Connection
-─────────────────────────────────────────────
-GPIO 18 (PWM) ───► Servo Motor Signal (Orange/Yellow wire)
-GPIO 19       ───► Active Buzzer (+) Positive Pin
-GPIO 2        ───► LED Anode (Long leg with 220Ω resistor)
-GPIO 4        ───► Push Button Pin 1 (Pin 2 connects to GND)
-5V / VIN      ───► Servo VCC (Red wire) & Buzzer VCC
-GND           ───► Servo GND (Brown/Black), Buzzer (-), Button Pin 2, LED Cathode
-```
+| Component | Component Pin | Connect to ESP32 Pin | Note |
+| :--- | :--- | :--- | :--- |
+| **OLED Display** | **VCC** | **3.3V** or **VIN / 5V** | Power (matches OLED spec) |
+| | **GND** | **GND** | Ground rail |
+| | **SDA** | **GPIO 21** | I2C Data |
+| | **SCL** | **GPIO 22** | I2C Clock |
+| **Active Buzzer** | **(+) Positive Pin** | **GPIO 19** | Audio alarm trigger |
+| | **(-) Negative Pin** | **GND** | Ground rail |
+| **LED Light** | **Anode (Long leg)** | **GPIO 2** | Through 220Ω-330Ω resistor |
+| | **Cathode (Short leg)**| **GND** | Ground rail |
+| **Push Button** | **Pin 1 (Leg A)** | **GPIO 4** | "Taken / Dismiss" input |
+| | **Pin 2 (Leg B)** | **GND** | Uses internal pull-up |
 
 ---
 
-## 3. Flashing Firmware via Arduino IDE
+## 2. Arduino IDE Libraries Setup
 
-1. **Install Arduino IDE** (v2.0 or newer).
-2. **Add ESP32 Board URL** in **File → Preferences → Additional boards manager URLs**:
-   ```
-   https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-   ```
-3. Go to **Tools → Board → Boards Manager**, search for `esp32` by Espressif and click **Install**.
-4. Go to **Tools → Manage Libraries**, search and install:
-   - **`ArduinoJson`** (by Benoit Blanchon - version 6 or 7)
-   - **`ESP32Servo`** (by Kevin Harrington)
-5. Open the firmware file:
-   [`firmware/esp32/intellimed_esp32.ino`](./intellimed_esp32.ino)
-6. Update your Wi-Fi credentials in lines 19-20:
+Open **Arduino IDE** and install these 3 libraries from **Sketch → Include Library → Manage Libraries**:
+
+1. **`Adafruit SSD1306`** (by Adafruit)
+2. **`Adafruit GFX Library`** (by Adafruit)
+3. **`ArduinoJson`** (by Benoit Blanchon)
+
+---
+
+## 3. Flash Code to ESP32
+
+1. Open [`firmware/esp32/intellimed_esp32.ino`](./intellimed_esp32.ino).
+2. Change your Wi-Fi name & password at lines 30–31:
    ```cpp
    const char* WIFI_SSID = "Your_WiFi_Name";
    const char* WIFI_PASSWORD = "Your_WiFi_Password";
    ```
-7. Select **Tools → Board → ESP32 Dev Module** and choose your COM Port.
-8. Click **Upload** (Hold `BOOT` button on ESP32 if upload stays on "Connecting...").
+3. Connect ESP32 via micro-USB / Type-C.
+4. Select board **ESP32 Dev Module**, choose your Port, and click **Upload**.
 
 ---
 
-## 4. How the Integration Works (Live Demonstration Flow)
+## 4. Live Behavior
 
-1. **You set a medicine time on your phone/PC** using the live web app:
-   👉 [https://frontend-pi-one-45.vercel.app](https://frontend-pi-one-45.vercel.app)
-   *(e.g., Medicine: "Paracetamol", Time: "14:30", Slot: 1)*
-2. The web app saves this directly into **Firebase Firestore**.
-3. Your **ESP32** wakes up, connects to Wi-Fi, and fetches the schedule directly from Firestore.
-4. When the internal real-time clock hits the scheduled minute:
-   - 🔊 The **Buzzer sounds** and **LED blinks** to alert the patient.
-   - ⚙️ The **Servo motor rotates** to dispense the pill from Compartment #1.
-   - 🔘 Patient takes the pill and presses the **hardware button** on the box.
-   - ☁️ The ESP32 sends an instant update to Firestore marking `takenToday = true`.
-   - 📱 The web app automatically updates to show **"Taken ✓"** without refreshing!
+1. **On Boot:**
+   - OLED shows `INTELLIMED Starting...` and connects to your Wi-Fi.
+   - OLED displays current local time (e.g. `02:30 PM`) and the next scheduled medicine (e.g. `Next: Paracetamol`).
+2. **When Reminder Time Arrives:**
+   - 🔊 **Buzzer beeps** rapidly.
+   - 🚨 **LED flashes**.
+   - 📺 **OLED screen updates** in bold text:
+     ```
+     ! TIME TO TAKE !
+     Paracetamol
+     1 Tablet after breakfast
+     Press button to stop
+     ```
+3. **When you press the button:**
+   - Alarm stops immediately.
+   - OLED shows: `TAKEN! OK - Recorded in Firebase`.
+   - ESP32 updates Firebase Firestore in the cloud.
+   - Your live website at **https://frontend-pi-one-45.vercel.app** instantly marks the medicine as **`Taken ✓`**!

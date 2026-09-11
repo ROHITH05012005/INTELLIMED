@@ -1,182 +1,201 @@
 /*
  * =========================================================================
- * INTELLIMED — Smart Medicine Dispenser & Reminder Firmware
- * Hardware: ESP32 (ESP32-WROOM-32)
+ * INTELLIMED — Smart Medicine Reminder System Firmware
+ * Hardware:
+ *   - ESP32 Development Board (30/38 pin)
+ *   - 0.96" I2C OLED Display (SSD1306 128x64)
+ *   - Active Buzzer
+ *   - LED Light
+ *   - Push Button
+ *   - Breadboard & Jumper Wires
+ * 
  * Backend: Firebase Cloud Firestore
  * =========================================================================
  * 
  * Required Libraries (Install via Arduino Library Manager):
- * 1. ArduinoJson (by Benoit Blanchon)
- * 2. ESP32Servo (by Kevin Harrington)
- * 3. Adafruit SSD1306 & Adafruit GFX (Optional for OLED Display)
+ * 1. Adafruit SSD1306 (by Adafruit)
+ * 2. Adafruit GFX Library (by Adafruit)
+ * 3. ArduinoJson (by Benoit Blanchon)
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
-#include <ESP32Servo.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include <time.h>
 
-// ─── 1. Wi-Fi Credentials ─────────────────────────────────────────
-const char* WIFI_SSID = "YOUR_WIFI_SSID";         // Replace with your WiFi name
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"; // Replace with your WiFi password
+// ─── 1. Wi-Fi Configuration ───────────────────────────────────────
+const char* WIFI_SSID = "YOUR_WIFI_SSID";         // Replace with your WiFi SSID
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"; // Replace with your WiFi Password
 
 // ─── 2. Firebase Configuration ────────────────────────────────────
-const char* FIREBASE_PROJECT_ID = "intellimed-app";
 const char* FIREBASE_API_KEY = "AIzaSyDQX9ey2D5jwSbztT6C2iit7lrnvc3Up8o";
-
-// Firestore REST Endpoint
 const String FIRESTORE_URL = "https://firestore.googleapis.com/v1/projects/intellimed-app/databases/(default)/documents/reminders?key=AIzaSyDQX9ey2D5jwSbztT6C2iit7lrnvc3Up8o";
 
 // ─── 3. Hardware Pinout ───────────────────────────────────────────
-#define SERVO_PIN      18  // Servo motor for dispensing pills
-#define BUZZER_PIN     19  // Piezo buzzer for audio alarm
-#define LED_PIN         2  // Status / Alert LED (Built-in or external)
-#define BUTTON_PIN      4  // Physical "Taken / Dispense" button (Pull-up)
+#define BUZZER_PIN     19  // Buzzer Positive (+) pin
+#define LED_PIN         2  // LED Anode (or built-in LED)
+#define BUTTON_PIN      4  // Push Button (Internal pull-up to GND)
 
-Servo dispenserServo;
+// OLED Display (I2C)
+#define SCREEN_WIDTH  128
+#define SCREEN_HEIGHT  64
+#define OLED_RESET     -1
+#define OLED_SDA       21  // ESP32 I2C SDA
+#define OLED_SCL       22  // ESP32 I2C SCL
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// ─── 4. NTP Time Configuration (India Standard Time UTC +5:30) ────
+// ─── 4. NTP Clock (India Standard Time UTC +5:30) ─────────────────
 const char* NTP_SERVER = "pool.ntp.org";
-const long  GMT_OFFSET_SEC = 19800; // +5 hours 30 mins (5.5 * 3600)
+const long  GMT_OFFSET_SEC = 19800; // 5.5 hours = 19800 seconds
 const int   DAYLIGHT_OFFSET_SEC = 0;
 
 // Internal state
 unsigned long lastFetchTime = 0;
-const unsigned long FETCH_INTERVAL = 30000; // Fetch from Firebase every 30 seconds
+const unsigned long FETCH_INTERVAL = 20000; // Check Firebase every 20 seconds
 String lastTriggeredTime = "";
+bool isAlarmActive = false;
+String activeMedicineName = "";
+String activeMedicineDocId = "";
 
 struct MedicineReminder {
   String id;
   String name;
-  String time;      // "HH:MM"
-  int compartment;  // 1, 2, 3
+  String time; // "HH:MM"
+  String dosage;
   bool enabled;
   bool takenToday;
 };
 
 #define MAX_REMINDERS 10
-MedicineReminder activeReminders[MAX_REMINDERS];
+MedicineReminder remindersList[MAX_REMINDERS];
 int reminderCount = 0;
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-  Serial.println("\n--- INTELLIMED SMART DISPENSER INITIALIZING ---");
+  delay(500);
 
-  // Setup GPIO pins
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(LED_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   digitalWrite(BUZZER_PIN, LOW);
   digitalWrite(LED_PIN, LOW);
 
-  // Setup Servo
-  ESP32PWM::allocateTimer(0);
-  dispenserServo.setPeriodHertz(50);
-  dispenserServo.attach(SERVO_PIN, 500, 2400);
-  dispenserServo.write(0); // Home position
+  // Initialize I2C OLED Display
+  Wire.begin(OLED_SDA, OLED_SCL);
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3C or 0x3D
+    Serial.println(F("[OLED] SSD1306 allocation failed. Check wiring!"));
+  } else {
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(18, 15);
+    display.println("INTELLIMED");
+    display.setCursor(12, 35);
+    display.println("Starting Device...");
+    display.display();
+  }
 
   // Connect to Wi-Fi
   connectWiFi();
 
-  // Configure NTP Time
+  // Setup Time
   configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
-  Serial.println("[NTP] Synchronizing current time...");
-  printCurrentTime();
 
-  // Initial fetch from Firebase
+  // First fetch from Firebase
   fetchRemindersFromFirebase();
+  showHomeScreen();
 }
 
 void loop() {
-  // 1. Maintain Wi-Fi
+  // Check Wi-Fi
   if (WiFi.status() != WL_CONNECTED) {
     connectWiFi();
   }
 
-  // 2. Periodic sync from Firebase Firestore
-  if (millis() - lastFetchTime > FETCH_INTERVAL) {
+  // Fetch reminders periodically
+  if (millis() - lastFetchTime > FETCH_INTERVAL && !isAlarmActive) {
     lastFetchTime = millis();
     fetchRemindersFromFirebase();
+    showHomeScreen();
   }
 
-  // 3. Check clock against scheduled reminders
-  checkScheduledReminders();
+  // Check alarm condition
+  checkClockAndReminders();
 
-  // 4. Check physical hardware button
+  // Handle active alarm beeping / blinking
+  if (isAlarmActive) {
+    handleAlarmBeep();
+  }
+
+  // Check physical button press
   if (digitalRead(BUTTON_PIN) == LOW) {
     delay(50); // Debounce
     if (digitalRead(BUTTON_PIN) == LOW) {
-      Serial.println("[BUTTON] Hardware 'Taken' button pressed!");
-      stopAlarm();
-      delay(500);
+      Serial.println(F("[BUTTON] Button pressed!"));
+      if (isAlarmActive) {
+        dismissAlarmAndMarkTaken();
+      }
+      delay(300);
     }
   }
 
-  delay(1000);
+  delay(200);
 }
 
-// ─── Wi-Fi Connection Helper ──────────────────────────────────────
+// ─── Wi-Fi Connection ─────────────────────────────────────────────
 void connectWiFi() {
-  Serial.print("[WiFi] Connecting to: ");
-  Serial.println(WIFI_SSID);
+  display.clearDisplay();
+  display.setCursor(0, 10);
+  display.println("Connecting WiFi:");
+  display.println(WIFI_SSID);
+  display.display();
+
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+  int tries = 0;
+  while (WiFi.status() != WL_CONNECTED && tries < 20) {
     delay(500);
     Serial.print(".");
     digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-    attempts++;
+    tries++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
     digitalWrite(LED_PIN, HIGH);
-    Serial.println("\n[WiFi] Connected successfully!");
-    Serial.print("[WiFi] IP Address: ");
-    Serial.println(WiFi.localIP());
+    Serial.println("\n[WiFi] Connected! IP: " + WiFi.localIP().toString());
   } else {
     digitalWrite(LED_PIN, LOW);
-    Serial.println("\n[WiFi] Connection failed! Will retry...");
+    Serial.println("\n[WiFi] Connection Failed!");
   }
 }
 
-// ─── Fetch from Cloud Firestore REST API ──────────────────────────
+// ─── Fetch from Firebase Cloud Firestore ──────────────────────────
 void fetchRemindersFromFirebase() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   WiFiClientSecure client;
-  client.setInsecure(); // Skip SSL certificate validation on ESP32
-
+  client.setInsecure();
   HTTPClient https;
-  Serial.println("[Firestore] Fetching active reminders...");
 
   if (https.begin(client, FIRESTORE_URL)) {
     int httpCode = https.GET();
-
     if (httpCode == HTTP_CODE_OK) {
       String payload = https.getString();
-      parseFirestorePayload(payload);
-    } else {
-      Serial.printf("[Firestore] Error GET request failed: %d\n", httpCode);
+      parseReminders(payload);
     }
     https.end();
   }
 }
 
-// ─── Parse JSON Documents from Firestore ──────────────────────────
-void parseFirestorePayload(String jsonStr) {
+void parseReminders(String jsonStr) {
   StaticJsonDocument<4096> doc;
-  DeserializationError error = deserializeJson(doc, jsonStr);
-
-  if (error) {
-    Serial.print("[JSON] Deserialization failed: ");
-    Serial.println(error.f_str());
-    return;
-  }
+  DeserializationError err = deserializeJson(doc, jsonStr);
+  if (err) return;
 
   JsonArray documents = doc["documents"].as<JsonArray>();
   reminderCount = 0;
@@ -187,31 +206,22 @@ void parseFirestorePayload(String jsonStr) {
     JsonObject fields = item["fields"];
     String name = fields["medicineName"]["stringValue"] | "";
     String timeStr = fields["time"]["stringValue"] | "";
+    String dosage = fields["dosage"]["stringValue"] | "1 Dose";
     bool enabled = fields["enabled"]["booleanValue"] | true;
     bool takenToday = fields["takenToday"]["booleanValue"] | false;
-    int compartment = fields["compartment"]["integerValue"] | 1;
 
-    // Document ID path: projects/.../databases/.../documents/reminders/{id}
     String docPath = item["name"].as<String>();
     String id = docPath.substring(docPath.lastIndexOf('/') + 1);
 
     if (name.length() > 0 && timeStr.length() > 0) {
-      activeReminders[reminderCount].id = id;
-      activeReminders[reminderCount].name = name;
-      activeReminders[reminderCount].time = timeStr;
-      activeReminders[reminderCount].compartment = compartment;
-      activeReminders[reminderCount].enabled = enabled;
-      activeReminders[reminderCount].takenToday = takenToday;
-
-      Serial.printf("  -> Loaded: %s at %s (Slot #%d, Enabled: %d, Taken: %d)\n",
-                    name.c_str(), timeStr.c_str(), compartment, enabled, takenToday);
+      remindersList[reminderCount] = { id, name, timeStr, dosage, enabled, takenToday };
       reminderCount++;
     }
   }
 }
 
-// ─── Check Alarm Time ─────────────────────────────────────────────
-void checkScheduledReminders() {
+// ─── Check Clock Against Scheduled Medicines ──────────────────────
+void checkClockAndReminders() {
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) return;
 
@@ -219,68 +229,83 @@ void checkScheduledReminders() {
   strftime(currentTime, sizeof(currentTime), "%H:%M", &timeinfo);
   String currentStr = String(currentTime);
 
-  if (lastTriggeredTime == currentStr) return; // Already triggered for this minute
+  if (lastTriggeredTime == currentStr) return;
 
   for (int i = 0; i < reminderCount; i++) {
-    if (activeReminders[i].enabled && !activeReminders[i].takenToday) {
-      if (activeReminders[i].time == currentStr) {
+    if (remindersList[i].enabled && !remindersList[i].takenToday) {
+      if (remindersList[i].time == currentStr) {
         lastTriggeredTime = currentStr;
-        triggerDispenseRoutine(activeReminders[i]);
+        startAlarm(remindersList[i]);
         break;
       }
     }
   }
 }
 
-// ─── Trigger Hardware Routine (Buzzer, Servo, LED) ────────────────
-void triggerDispenseRoutine(MedicineReminder reminder) {
-  Serial.println("\n***************************************************");
-  Serial.printf("⏰ ALARM TRIGGERED FOR: %s (Slot #%d)\n", reminder.name.c_str(), reminder.compartment);
-  Serial.println("***************************************************");
+// ─── Start Alarm Routine ──────────────────────────────────────────
+void startAlarm(MedicineReminder reminder) {
+  isAlarmActive = true;
+  activeMedicineName = reminder.name;
+  activeMedicineDocId = reminder.id;
 
-  // 1. Move servo motor to drop pill from compartment
-  dispensePill(reminder.compartment);
+  Serial.println("\n>>> ALARM TRIGGERED FOR: " + reminder.name);
 
-  // 2. Sound Buzzer and Blink LED alarm for 15 seconds or until button press
-  for (int i = 0; i < 30; i++) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    digitalWrite(LED_PIN, HIGH);
-    delay(250);
-    digitalWrite(BUZZER_PIN, LOW);
-    digitalWrite(LED_PIN, LOW);
-    delay(250);
+  // Update OLED display with medicine alert
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(20, 2);
+  display.println("! TIME TO TAKE !");
+  display.drawLine(0, 12, 128, 12, SSD1306_WHITE);
 
-    // Stop if user presses the physical button
-    if (digitalRead(BUTTON_PIN) == LOW) {
-      Serial.println("[ALARM] Dismissed via physical button!");
-      break;
-    }
-  }
+  display.setTextSize(2);
+  display.setCursor(0, 18);
+  display.println(reminder.name);
 
-  // 3. Mark as taken in Cloud Firestore
-  updateReminderTakenInFirestore(reminder.id);
+  display.setTextSize(1);
+  display.setCursor(0, 40);
+  display.println(reminder.dosage);
+
+  display.setCursor(0, 54);
+  display.println("Press button to stop");
+  display.display();
 }
 
-// ─── Physical Servo Dispensing Mechanism ──────────────────────────
-void dispensePill(int slot) {
-  Serial.printf("[SERVO] Rotating for Slot #%d...\n", slot);
-  
-  // Angle mapped to slot compartment
-  int targetAngle = slot * 60; // Slot 1 = 60°, Slot 2 = 120°, Slot 3 = 180°
-  dispenserServo.write(targetAngle);
-  delay(1200); // Allow pill to drop
-  dispenserServo.write(0); // Return to home/lock
-  delay(500);
+// ─── Beep and Blink ───────────────────────────────────────────────
+void handleAlarmBeep() {
+  digitalWrite(BUZZER_PIN, HIGH);
+  digitalWrite(LED_PIN, HIGH);
+  delay(150);
+  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(LED_PIN, LOW);
+  delay(150);
 }
 
-void stopAlarm() {
+// ─── Dismiss Alarm & Update Firebase ──────────────────────────────
+void dismissAlarmAndMarkTaken() {
+  isAlarmActive = false;
   digitalWrite(BUZZER_PIN, LOW);
   digitalWrite(LED_PIN, HIGH);
+
+  // Show confirmation on OLED
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setCursor(14, 15);
+  display.println("TAKEN! OK");
+  display.setTextSize(1);
+  display.setCursor(8, 42);
+  display.println("Recorded in Firebase");
+  display.display();
+
+  // Send update to Firebase
+  updateFirebaseTaken(activeMedicineDocId);
+
+  delay(2000);
+  showHomeScreen();
 }
 
-// ─── Mark Reminder Taken in Firestore REST ────────────────────────
-void updateReminderTakenInFirestore(String docId) {
-  if (WiFi.status() != WL_CONNECTED) return;
+// ─── Update Firestore Record ──────────────────────────────────────
+void updateFirebaseTaken(String docId) {
+  if (WiFi.status() != WL_CONNECTED || docId == "") return;
 
   WiFiClientSecure client;
   client.setInsecure();
@@ -290,21 +315,55 @@ void updateReminderTakenInFirestore(String docId) {
 
   if (https.begin(client, url)) {
     https.addHeader("Content-Type", "application/json");
-    String requestBody = "{\"fields\":{\"takenToday\":{\"booleanValue\":true}}}";
-    int httpCode = https.sendRequest("PATCH", requestBody);
-
-    if (httpCode == HTTP_CODE_OK) {
-      Serial.printf("[Firestore] Successfully marked %s as TAKEN in Firestore!\n", docId.c_str());
-    } else {
-      Serial.printf("[Firestore] Error updating status: %d\n", httpCode);
-    }
+    String body = "{\"fields\":{\"takenToday\":{\"booleanValue\":true}}}";
+    int code = https.sendRequest("PATCH", body);
+    Serial.printf("[Firestore] Status updated: %d\n", code);
     https.end();
   }
 }
 
-void printCurrentTime() {
+// ─── Normal Home Screen on OLED ───────────────────────────────────
+void showHomeScreen() {
   struct tm timeinfo;
+  char timeBuffer[10] = "--:--";
   if (getLocalTime(&timeinfo)) {
-    Serial.println(&timeinfo, "[Time] Current Local Time: %A, %B %d %Y %H:%M:%S");
+    strftime(timeBuffer, sizeof(timeBuffer), "%I:%M %p", &timeinfo);
   }
+
+  // Find next pending medicine
+  String nextMed = "None scheduled";
+  String nextTime = "";
+  for (int i = 0; i < reminderCount; i++) {
+    if (remindersList[i].enabled && !remindersList[i].takenToday) {
+      nextMed = remindersList[i].name;
+      nextTime = remindersList[i].time;
+      break;
+    }
+  }
+
+  display.clearDisplay();
+  // Header
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("INTELLIMED");
+  display.setCursor(80, 0);
+  display.println(WiFi.status() == WL_CONNECTED ? "WiFi:OK" : "No WiFi");
+  display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
+
+  // Time
+  display.setTextSize(2);
+  display.setCursor(18, 16);
+  display.println(timeBuffer);
+
+  // Next Medicine
+  display.drawLine(0, 36, 128, 36, SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 42);
+  display.print("Next: ");
+  display.println(nextMed);
+  display.setCursor(0, 54);
+  display.print("Time: ");
+  display.println(nextTime != "" ? nextTime : "Done for today!");
+
+  display.display();
 }

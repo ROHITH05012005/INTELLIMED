@@ -11,22 +11,25 @@ import {
   Moon,
   Volume2,
   VolumeX,
+  RefreshCw,
 } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 
 interface Reminder {
   id: string;
   medicineName: string;
-  time: string; // "HH:MM" in 24h format e.g. "14:30"
+  time: string; // "HH:MM" e.g. "14:30"
   dosage: string;
   enabled: boolean;
   takenToday: boolean;
 }
 
-// Simple Web Audio API chime generator (no external files needed)
+// Simple Web Audio API chime generator
 function playNotificationChime() {
   try {
-    const AudioContext = window.AudioContext || (window as unknown as { webkitAudioContext: typeof window.AudioContext }).webkitAudioContext;
+    const AudioContext =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof window.AudioContext }).webkitAudioContext;
     if (!AudioContext) return;
     const ctx = new AudioContext();
 
@@ -63,7 +66,7 @@ export default function MinimalDashboard() {
   const { resolvedTheme, setTheme } = useTheme();
   const toggleTheme = () => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
 
-  // Reminders state (pre-populated with 2 examples)
+  // Reminders state
   const [reminders, setReminders] = useState<Reminder[]>(() => {
     const saved = localStorage.getItem('intellimed_reminders');
     if (saved) {
@@ -101,6 +104,9 @@ export default function MinimalDashboard() {
     ];
   });
 
+  const [isLoading, setIsLoading] = useState(false);
+  const [backendSynced, setBackendSynced] = useState(false);
+
   // New Reminder Form Inputs
   const [newMedName, setNewMedName] = useState('');
   const [newMedTime, setNewMedTime] = useState('12:00');
@@ -110,6 +116,31 @@ export default function MinimalDashboard() {
   const [activeAlert, setActiveAlert] = useState<Reminder | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const lastTriggeredMinute = useRef<string>('');
+
+  // Fetch reminders from backend API on mount
+  const fetchRemindersFromBackend = async () => {
+    try {
+      setIsLoading(true);
+      const res = await fetch('/api/reminders');
+      if (res.ok) {
+        const json = await res.json();
+        const data = Array.isArray(json) ? json : json.data;
+        if (Array.isArray(data) && data.length > 0) {
+          setReminders(data);
+          localStorage.setItem('intellimed_reminders', JSON.stringify(data));
+          setBackendSynced(true);
+        }
+      }
+    } catch {
+      // Offline / fallback to localStorage
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRemindersFromBackend();
+  }, []);
 
   // Save to localStorage
   useEffect(() => {
@@ -123,7 +154,7 @@ export default function MinimalDashboard() {
     }
   }, []);
 
-  // Clock & Alarm monitor: checks every 10 seconds
+  // Clock & Alarm monitor: checks every 5 seconds
   useEffect(() => {
     const checkAlarm = () => {
       const now = new Date();
@@ -133,7 +164,6 @@ export default function MinimalDashboard() {
 
       if (lastTriggeredMinute.current === currentTimeStr) return;
 
-      // Find matching reminder
       const matched = reminders.find(
         (r) => r.enabled && r.time === currentTimeStr && !r.takenToday
       );
@@ -155,7 +185,6 @@ export default function MinimalDashboard() {
       playNotificationChime();
     }
 
-    // System Notification if permitted
     if ('Notification' in window && Notification.permission === 'granted') {
       new Notification(`⏰ Time for ${reminder.medicineName}!`, {
         body: `${reminder.dosage || 'Please take your scheduled medicine.'} (Scheduled for ${formatTime12h(reminder.time)})`,
@@ -164,40 +193,92 @@ export default function MinimalDashboard() {
     }
   };
 
-  const handleAddReminder = (e: React.FormEvent) => {
+  const handleAddReminder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMedName.trim() || !newMedTime) return;
 
-    const newReminder: Reminder = {
-      id: Date.now().toString(),
+    const payload = {
       medicineName: newMedName.trim(),
       time: newMedTime,
       dosage: newMedDosage.trim() || '1 Dose',
+    };
+
+    // Optimistic local update
+    const tempReminder: Reminder = {
+      id: Date.now().toString(),
+      ...payload,
       enabled: true,
       takenToday: false,
     };
-
-    setReminders((prev) => [...prev, newReminder]);
+    setReminders((prev) => [...prev, tempReminder]);
     setNewMedName('');
     setNewMedDosage('');
+
+    // Sync to backend
+    try {
+      const res = await fetch('/api/reminders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        setBackendSynced(true);
+      }
+    } catch {
+      // Local copy saved
+    }
   };
 
-  const handleDeleteReminder = (id: string) => {
+  const handleDeleteReminder = async (id: string) => {
     setReminders((prev) => prev.filter((r) => r.id !== id));
+
+    try {
+      await fetch(`/api/reminders?id=${id}`, { method: 'DELETE' });
+    } catch {
+      // Handled locally
+    }
   };
 
-  const handleToggleReminder = (id: string) => {
+  const handleToggleReminder = async (id: string) => {
+    const item = reminders.find((r) => r.id === id);
+    if (!item) return;
+    const newEnabled = !item.enabled;
+
     setReminders((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r))
+      prev.map((r) => (r.id === id ? { ...r, enabled: newEnabled } : r))
     );
+
+    try {
+      await fetch('/api/reminders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, enabled: newEnabled }),
+      });
+    } catch {
+      // Handled locally
+    }
   };
 
-  const handleMarkTaken = (id: string) => {
+  const handleMarkTaken = async (id: string) => {
+    const item = reminders.find((r) => r.id === id);
+    if (!item) return;
+    const newTaken = !item.takenToday;
+
     setReminders((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, takenToday: !r.takenToday } : r))
+      prev.map((r) => (r.id === id ? { ...r, takenToday: newTaken } : r))
     );
     if (activeAlert?.id === id) {
       setActiveAlert(null);
+    }
+
+    try {
+      await fetch('/api/reminders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, takenToday: newTaken }),
+      });
+    } catch {
+      // Handled locally
     }
   };
 
@@ -223,9 +304,12 @@ export default function MinimalDashboard() {
               <h1 className="font-extrabold text-base tracking-tight bg-gradient-to-r from-sky-600 to-indigo-600 dark:from-sky-400 dark:to-indigo-400 bg-clip-text text-transparent">
                 INTELLIMED
               </h1>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 -mt-0.5">
-                Medicine Reminder
-              </p>
+              <div className="flex items-center gap-1.5 -mt-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {backendSynced ? 'Backend Connected' : 'Medicine Reminder'}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -346,10 +430,13 @@ export default function MinimalDashboard() {
         {/* ── Saved Reminders List ── */}
         <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="font-bold text-base text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-indigo-500" />
-              Your Reminders ({reminders.length})
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold text-base text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-indigo-500" />
+                Your Reminders ({reminders.length})
+              </h2>
+              {isLoading && <RefreshCw className="w-3.5 h-3.5 text-sky-500 animate-spin" />}
+            </div>
 
             <button
               onClick={() => {
